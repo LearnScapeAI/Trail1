@@ -37,7 +37,7 @@ if not CUSTOM_SEARCH_ENGINE_ID:
 
 # Pinecone configuration
 INDEX_NAME = "knowledge-base-index"
-EMBEDDING_DIM = 512  # Adjust based on your embedding model
+EMBEDDING_DIM = 384  # Adjust based on your embedding model
 
 # Initialize Pinecone using the serverless client
 pc = Pinecone(api_key=PINECONE_API_KEY)
