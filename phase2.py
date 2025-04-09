@@ -155,12 +155,16 @@ def generate_roadmap(topic, top_k=3):
         print("No 'summary' field found in the metadata of the retrieved documents.")
 
     prompt = (
-        f"Based on the following information, create a detailed roadmap for the topic '{topic}'. "
-        f"The roadmap should outline the key steps, milestones, and actionable items required to achieve success. "
-        f"Synthesize the roadmap using the details provided in the context below.\n\n"
-        f"Context:\n{context_text}\n\n"
-        f"Format the output strictly in JSON with the keys 'roadmap_title' and 'steps', where 'steps' is a list of bullet points."
-    )
+    f"Based on the following information, create an actionable, realistic, and detailed day-by-day roadmap for the topic '{topic}'. "
+    "The roadmap should provide a step-by-step plan starting from Day 1, outlining specific tasks, milestones, and actionable items that a person can realistically follow. "
+    "For each day, detail what needs to be accomplished, ensuring the plan is practical and sequential. "
+    "If there are any useful resource links present in the context from the knowledge base, include them in the appropriate steps to support further learning and implementation. "
+    "Synthesize the roadmap using the details provided in the context below.\n\n"
+    "Context:\n"
+    f"{context_text}\n\n"
+    "Format the output strictly in JSON with the keys 'roadmap_title' and 'steps', where 'steps' is a list of bullet points that detail the day-by-day plan (e.g., 'Day 1: ...', 'Day 2: ...') along with any resource links if available."
+)
+
     roadmap = call_gemini_api(prompt, context_text)
     return roadmap
 
@@ -179,4 +183,3 @@ if __name__ == "__main__":
         print(json.dumps(roadmap, indent=2))
     else:
         print("Failed to generate a roadmap.")
-te

@@ -178,7 +178,9 @@ def call_gemini_api(prompt, document_content):
             return {
                 "title": "Error",
                 "summary": error_info,
-                "key_points": []
+                "key_points": [],
+                "learning_objectives": [],
+                "free_resources": []
             }
 
         try:
@@ -194,17 +196,34 @@ def call_gemini_api(prompt, document_content):
             if not isinstance(key_points, list):
                 print(f"Warning: 'key_points' from Gemini was not a list, using empty list. Value: {key_points}")
                 key_points = []
-            return {"title": title, "summary": summary, "key_points": key_points}
+            # Retrieve additional fields if they exist
+            learning_objectives = parsed_output.get("learning_objectives", [])
+            free_resources = parsed_output.get("free_resources", [])
+            return {
+                "title": title,
+                "summary": summary,
+                "key_points": key_points,
+                "learning_objectives": learning_objectives,
+                "free_resources": free_resources
+            }
         except json.JSONDecodeError:
             print("Warning: Gemini response was not valid JSON. Using the full text as summary.")
-            return {"title": "Title Generation Failed (Non-JSON)", "summary": generated_text, "key_points": []}
+            return {
+                "title": "Title Generation Failed (Non-JSON)",
+                "summary": generated_text,
+                "key_points": [],
+                "learning_objectives": [],
+                "free_resources": []
+            }
 
     except requests.exceptions.Timeout as e:
         print(f"Error calling Gemini API (Timeout): {e}")
         return {
             "title": "Error",
             "summary": f"API request timed out after 120 seconds: {e}",
-            "key_points": []
+            "key_points": [],
+            "learning_objectives": [],
+            "free_resources": []
         }
     except requests.exceptions.RequestException as e:
         print(f"Error calling Gemini API (RequestException): {e}")
@@ -218,7 +237,9 @@ def call_gemini_api(prompt, document_content):
         return {
             "title": "Error",
             "summary": f"API request failed: {e}. Status: {status_code}",
-            "key_points": []
+            "key_points": [],
+            "learning_objectives": [],
+            "free_resources": []
         }
     except Exception as e:
         print(f"An unexpected error occurred during Gemini API call: {e.__class__.__name__} - {e}")
@@ -231,7 +252,9 @@ def call_gemini_api(prompt, document_content):
         return {
             "title": "Error",
             "summary": error_summary,
-            "key_points": []
+            "key_points": [],
+            "learning_objectives": [],
+            "free_resources": []
         }
 
 # -------------------------
@@ -264,13 +287,23 @@ def build_knowledge_base(query):
 
         print(f"Extracted ~{len(text_content)} characters of text. Calling Gemini...")
 
-        prompt = f"""Analyze the following document content which is related to the topic '{query}'.
+        # Updated enhanced prompt with additional educational details:
+        prompt = f"""
+Analyze the following document content related to the topic '{query}' and extract educational details designed to support a comprehensive learning roadmap.
 Provide the output STRICTLY in JSON format with the following keys:
-- "title": A concise and accurate title for the document's content.
-- "summary": A comprehensive summary of the main information (around 150-250 words).
-- "key_points": A list of 3-7 bullet points highlighting the most important facts or conclusions.
-
-If the document content is irrelevant to '{query}', very short, or seems like an error page, return JSON with "title": "Extraction Failed", "summary": "Content irrelevant or insufficient", and "key_points": [].
+- "title": A clear and concise title summarizing the document's main subject.
+- "summary": A detailed summary (at least 250 words) that explains the main content, insights, and educational value of the document.
+- "key_points": A list of 5-10 bullet points outlining the critical facts, concepts, or conclusions that a learner should understand.
+- "learning_objectives": A list of 3-5 specific learning objectives that a student should aim to achieve after reviewing this content.
+- "free_resources": A list of free and readily available resources (websites, articles, tutorials, videos, etc.) that can help a learner further explore the topic.
+If the document content is irrelevant to '{query}', too short, or appears to be an error page, return JSON with the following structure:
+{{
+  "title": "Extraction Failed",
+  "summary": "Content irrelevant or insufficient",
+  "key_points": [],
+  "learning_objectives": [],
+  "free_resources": []
+}}
 
 JSON Output:
 """
@@ -377,7 +410,9 @@ def upsert_to_pinecone(knowledge_base):
                 "title": str(item.get("title", "N/A"))[:500],
                 "summary": str(text_to_embed)[:2000],
                 "source_url": str(item.get("source_url", "N/A")),
-                "key_points": json.dumps(item.get("key_points", []))
+                "key_points": json.dumps(item.get("key_points", [])),
+                "learning_objectives": json.dumps(item.get("learning_objectives", [])),
+                "free_resources": json.dumps(item.get("free_resources", []))
             }
 
             vectors_to_upsert.append({
