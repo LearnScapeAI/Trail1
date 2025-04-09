@@ -5,7 +5,7 @@ import requests
 import json
 import time
 from sentence_transformers import SentenceTransformer
-from pinecone import Pinecone, ServerlessSpec, PineconeApiException  # Alias the new Client to Pinecone
+from pinecone import Pinecone, ServerlessSpec, PineconeApiException  # Using new Pinecone Client
 
 # -------------------------
 # Load Environment Variables
@@ -14,7 +14,7 @@ load_dotenv()
 
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 PINECONE_API_KEY = os.getenv('PINECONE_API_KEY')
-PINECONE_ENVIRONMENT = os.getenv('PINECONE_ENVIRONMENT')  # Add Pinecone environment variable
+PINECONE_ENVIRONMENT = os.getenv('PINECONE_ENVIRONMENT')  # Optional: Add your Pinecone environment if needed
 INDEX_NAME = "knowledge-base-index"
 
 if not GEMINI_API_KEY:
@@ -26,6 +26,9 @@ if not PINECONE_API_KEY:
 if not PINECONE_ENVIRONMENT:
     print("Warning: PINECONE_ENVIRONMENT not set. Assuming default environment.")
 
+# -------------------------
+# Gemini API Configuration
+# -------------------------
 MODEL_NAME = "gemini-1.5-pro-latest"
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={GEMINI_API_KEY}"
 
@@ -33,8 +36,9 @@ GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODE
 # Initialize Pinecone and Embedding Model
 # -------------------------
 try:
-    # Use the alias Pinecone for the new Client class
+    # Initialize Pinecone client using the provided API key.
     pc = Pinecone(api_key=PINECONE_API_KEY)
+    # Retrieve the index; this assumes the index already exists.
     index = pc.Index(INDEX_NAME)
 except Exception as e:
     print(f"Error accessing Pinecone index '{INDEX_NAME}': {e}")
@@ -93,7 +97,7 @@ def call_gemini_api(prompt, document_content):
             return parsed_output
         except json.JSONDecodeError:
             print("Warning: Gemini response was not valid JSON. Using full text as output.")
-            return {"roadmap_title": f"Generation Failed (Non-JSON) for '{topic}'", "steps": []}
+            return {"roadmap_title": f"Generation Failed (Non-JSON)", "steps": []}
     except requests.exceptions.RequestException as e:
         print(f"Error calling Gemini API: {e}")
         return {"roadmap_title": "Error", "steps": []}
@@ -105,7 +109,7 @@ def generate_embedding(text):
     if not text or not isinstance(text, str):
         print("Warning: generate_embedding received invalid text. Returning zero vector.")
         return [0.0] * EMBEDDING_DIM
-    embedding = embedding_model.encode(text)
+    embedding = embedding_model.encode(text, show_progress_bar=False)
     return embedding.tolist()
 
 # -------------------------
@@ -114,7 +118,13 @@ def generate_embedding(text):
 def query_knowledge_base(query, top_k=3):
     query_embedding = generate_embedding(query)
     try:
-        query_response = index.query(vector=query_embedding, top_k=top_k, include_metadata=True)
+        # Include the namespace "default" if data was stored in that namespace.
+        query_response = index.query(
+            vector=query_embedding,
+            top_k=top_k,
+            include_metadata=True,
+            namespace="default"  # Make sure this matches your upsert namespace
+        )
         return query_response.get("matches", [])
     except Exception as e:
         print(f"Error querying Pinecone: {e}")
@@ -131,7 +141,7 @@ def generate_roadmap(topic, top_k=3):
               "Please ensure the topic is well-represented in your data.")
         return None
 
-    # Combine the 'summary' field from retrieved documents to form the context
+    # Combine the 'summary' field from retrieved documents to form the context.
     context_parts = []
     for doc in retrieved_docs:
         summary = doc.get("metadata", {}).get("summary", "")
@@ -169,3 +179,4 @@ if __name__ == "__main__":
         print(json.dumps(roadmap, indent=2))
     else:
         print("Failed to generate a roadmap.")
+te

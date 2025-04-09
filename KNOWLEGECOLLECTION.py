@@ -8,7 +8,8 @@ import sys
 from bs4 import BeautifulSoup
 from pinecone import Pinecone, ServerlessSpec, PineconeApiException
 
-load_dotenv()  # Load environment variables from the .env file
+# Load environment variables from the .env file
+load_dotenv()
 
 # -------------------------
 # Configuration Parameters
@@ -17,7 +18,7 @@ load_dotenv()  # Load environment variables from the .env file
 # Load API Keys from Environment Variables
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-PINECONE_API_KEY = os.getenv('PINECONE_API_KEY', "pcsk_3JheQq_CDgQXKpDcTp1FeiTxascJDRJqmTp4YtDqFWATY4vJFnsLNJVKYjqM4QesD8agJW")
+PINECONE_API_KEY = os.getenv('PINECONE_API_KEY', "your_default_pinecone_key")
 CUSTOM_SEARCH_ENGINE_ID = os.getenv('CUSTOM_SEARCH_ENGINE_ID', '627f547ffe4c94a8d')
 
 # Validate API Keys
@@ -34,18 +35,27 @@ if not CUSTOM_SEARCH_ENGINE_ID:
     print("Error: CUSTOM_SEARCH_ENGINE_ID environment variable not set or provided.")
     sys.exit(1)
 
-
 # Pinecone configuration
 INDEX_NAME = "knowledge-base-index"
-EMBEDDING_DIM = 384  # Adjust based on your embedding model
+EMBEDDING_DIM = 384  # Ensure this matches your Sentence Transformer model
 
 # Initialize Pinecone using the serverless client
 pc = Pinecone(api_key=PINECONE_API_KEY)
 
+# -------------------------
+# Sentence Transformer Initialization
+# -------------------------
+from sentence_transformers import SentenceTransformer
+
+# Instantiate the embedding model once at startup.
+# "all-MiniLM-L6-v2" outputs 384-dimensional embeddings.
+embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+
+# -------------------------
 # Gemini Configuration
+# -------------------------
 MODEL_NAME = "gemini-1.5-pro-latest"
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={GEMINI_API_KEY}"
-
 
 # -------------------------
 # Google Custom Search Functions
@@ -68,8 +78,7 @@ def google_search(query, api_key, cse_id, num_results=5):
         if hasattr(e, 'response') and e.response is not None:
             print(f"Response Status: {e.response.status_code}")
             print(f"Response Text: {e.response.text}")
-        return []  # Return empty list on error
-
+        return []
 
 # -------------------------
 # Web Scraping Helpers
@@ -81,7 +90,7 @@ def fetch_page_content(url):
         'Accept-Language': 'en-US,en;q=0.5'
     }
     try:
-        response = requests.get(url, headers=headers, timeout=15)  # Increased timeout slightly
+        response = requests.get(url, headers=headers, timeout=15)
         if response.status_code == 200:
             # Attempt to detect encoding, fallback to utf-8
             response.encoding = response.apparent_encoding if response.apparent_encoding else 'utf-8'
@@ -99,45 +108,28 @@ def fetch_page_content(url):
         print(f"Unexpected error fetching {url}: {e}")
         return ""
 
-
 def extract_text_from_html(html_content):
     if not html_content:
         return ""
     try:
         soup = BeautifulSoup(html_content, 'html.parser')
-        # Remove script and style elements
-        for element in soup(["script", "style", "nav", "footer", "aside"]):  # Added common non-content tags
+        # Remove script, style, nav, footer, and aside elements
+        for element in soup(["script", "style", "nav", "footer", "aside"]):
             element.extract()
-        # Get text, replace multiple whitespace chars with a single space
         text = soup.get_text(separator=" ", strip=True)
         return ' '.join(text.split())
     except Exception as e:
         print(f"Error parsing HTML: {e}")
         return ""
 
-
 # -------------------------
 # Gemini API Call
 # -------------------------
 def call_gemini_api(prompt, document_content):
-    """
-    Calls the Gemini API using the correct endpoint and payload structure,
-    then returns a dictionary with title, summary, and key_points.
-
-    Args:
-        prompt (str): The instruction or question for the model.
-        document_content (str): The document or text to process.
-
-    Returns:
-        dict: Contains 'title', 'summary', and 'key_points' from the API response,
-              or error information if something went wrong.
-    """
     headers = {
         "Content-Type": "application/json"
     }
-
-    # Limit document content size to avoid exceeding API limits (adjust as needed)
-    max_doc_length = 30000  # Example limit (characters)
+    max_doc_length = 30000  # Limit to avoid exceeding API limits
     if len(document_content) > max_doc_length:
         print(f"Warning: Document content truncated to {max_doc_length} characters for Gemini API call.")
         document_content = document_content[:max_doc_length]
@@ -159,14 +151,13 @@ def call_gemini_api(prompt, document_content):
     }
 
     print("--- Calling Gemini API ---")
-    print(f"URL: {GEMINI_API_URL.split('?')[0]}?key=...")  # Hide key in log
+    print(f"URL: {GEMINI_API_URL.split('?')[0]}?key=...")  # Hiding the key in the log
 
     try:
         response = requests.post(GEMINI_API_URL, headers=headers, json=payload, timeout=120)
-        response.raise_for_status()  # Check for HTTP errors (4xx, 5xx)
+        response.raise_for_status()
         result = response.json()
 
-        # Robust extraction of generated text
         try:
             generated_text = result["candidates"][0]["content"]["parts"][0]["text"]
         except (KeyError, IndexError, TypeError) as parse_err:
@@ -190,9 +181,7 @@ def call_gemini_api(prompt, document_content):
                 "key_points": []
             }
 
-        # Attempt to parse the generated text as JSON
         try:
-            # Handle potential markdown code block ```json ... ```
             if generated_text.strip().startswith("```json"):
                 generated_text = generated_text.strip()[7:-3].strip()
             elif generated_text.strip().startswith("```"):
@@ -202,14 +191,12 @@ def call_gemini_api(prompt, document_content):
             title = parsed_output.get("title", "No title extracted")
             summary = parsed_output.get("summary", "No summary extracted")
             key_points = parsed_output.get("key_points", [])
-            # Ensure key_points is a list
             if not isinstance(key_points, list):
                 print(f"Warning: 'key_points' from Gemini was not a list, using empty list. Value: {key_points}")
                 key_points = []
             return {"title": title, "summary": summary, "key_points": key_points}
         except json.JSONDecodeError:
             print("Warning: Gemini response was not valid JSON. Using the full text as summary.")
-            # Return the raw text if it's not JSON, assuming it might be the summary itself
             return {"title": "Title Generation Failed (Non-JSON)", "summary": generated_text, "key_points": []}
 
     except requests.exceptions.Timeout as e:
@@ -247,12 +234,10 @@ def call_gemini_api(prompt, document_content):
             "key_points": []
         }
 
-
 # -------------------------
 # Building the Knowledge Base
 # -------------------------
 def build_knowledge_base(query):
-    # Use the globally loaded keys and IDs
     search_results = google_search(query, GOOGLE_API_KEY, CUSTOM_SEARCH_ENGINE_ID)
     knowledge_base = []
     if not search_results:
@@ -261,7 +246,7 @@ def build_knowledge_base(query):
 
     for item in search_results:
         link = item.get("link")
-        title_from_search = item.get("title", "N/A")  # Get title from search result as fallback
+        title_from_search = item.get("title", "N/A")
         if not link:
             print("Search result item missing 'link'. Skipping.")
             continue
@@ -273,13 +258,12 @@ def build_knowledge_base(query):
             continue
 
         text_content = extract_text_from_html(html_content)
-        if not text_content or len(text_content) < 100:  # Skip if very little text extracted
+        if not text_content or len(text_content) < 100:
             print(f"Skipping {link} due to insufficient text content ({len(text_content)} chars).")
             continue
 
         print(f"Extracted ~{len(text_content)} characters of text. Calling Gemini...")
 
-        # Updated prompt for clarity and robustness
         prompt = f"""Analyze the following document content which is related to the topic '{query}'.
 Provide the output STRICTLY in JSON format with the following keys:
 - "title": A concise and accurate title for the document's content.
@@ -292,39 +276,35 @@ JSON Output:
 """
         structured_data = call_gemini_api(prompt, text_content)
 
-        # Basic validation of the result from Gemini
         if structured_data.get("title") == "Error" or structured_data.get("title") == "Extraction Failed":
             print(f"Gemini extraction failed or content was irrelevant for {link}. Summary: {structured_data.get('summary')}")
-            # Optionally skip adding failed extractions to the KB
+            # Optionally skip adding failed extractions to the KB:
             # continue
         else:
             print(f"Successfully processed: Title - {structured_data.get('title')}")
 
-        # Add source URL regardless of success/failure to track origin
+        # Append the source URL for traceability
         structured_data["source_url"] = link
         knowledge_base.append(structured_data)
-
-        # Optional: Add a delay between processing URLs
         time.sleep(0.5)
 
     return knowledge_base
 
-
 # -------------------------
-# Embedding Generation (Updated Placeholder)
+# Embedding Generation (Using Sentence Transformers)
 # -------------------------
 def generate_embedding(text):
     """
-    Dummy embedding generation function.
-    For testing, this returns a vector filled with 0.1's instead of zeros.
-    Replace with your actual embedding generation code (e.g., using Sentence Transformers, OpenAI API, etc.).
+    Generates an embedding for the given text using the Sentence Transformer model.
+    Returns the embedding as a list of floats.
     """
-    if not text or not isinstance(text, str):  # Basic check
-        print("Warning: generate_embedding received invalid text. Returning zero vector.")
+    if not text or not isinstance(text, str):
+        print("Warning: Received invalid text. Returning zero vector.")
         return [0.0] * EMBEDDING_DIM
-    # Return a simple non-zero vector for testing Pinecone upsert
-    return [0.1 + (hash(text) % 10) * 0.01] * EMBEDDING_DIM  # Slightly varied dummy vector
 
+    # Generate the embedding vector with no progress bar for efficiency.
+    embedding = embedding_model.encode(text, show_progress_bar=False)
+    return embedding.tolist()
 
 # -------------------------
 # Pinecone Integration
@@ -355,10 +335,9 @@ def upsert_to_pinecone(knowledge_base):
                     name=INDEX_NAME,
                     dimension=EMBEDDING_DIM,
                     metric="cosine",
-                    spec=ServerlessSpec(cloud="aws", region="us-east-1")  # Ensure region is correct
+                    spec=ServerlessSpec(cloud="aws", region="us-east-1")
                 )
                 print(f"Index '{INDEX_NAME}' creation initiated. Waiting for it to be ready...")
-                # Wait for index to be ready
                 while True:
                     try:
                         index_description = pc.describe_index(INDEX_NAME)
@@ -367,12 +346,12 @@ def upsert_to_pinecone(knowledge_base):
                             break
                     except PineconeApiException as desc_e:
                         print(f"Waiting for index... (describe error: {desc_e})")
-                    time.sleep(10)  # Wait longer between checks
+                    time.sleep(10)
             except PineconeApiException as create_e:
                 print(f"Error creating Pinecone index: {create_e}")
                 if "quota" in str(create_e).lower():
                     print("Suggestion: Check your Pinecone plan limits and existing indexes.")
-                return  # Stop if index creation fails
+                return
         else:
             print(f"Index '{INDEX_NAME}' already exists.")
 
@@ -440,7 +419,6 @@ def upsert_to_pinecone(knowledge_base):
 
     except Exception as e:
         print(f"An unexpected error occurred during Pinecone operations: {e}")
-
 
 # -------------------------
 # Main Execution
