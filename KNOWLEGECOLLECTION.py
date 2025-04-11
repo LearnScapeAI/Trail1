@@ -289,24 +289,27 @@ def build_knowledge_base(query):
 
         # Updated enhanced prompt with additional educational details:
         prompt = f"""
-Analyze the following document content related to the topic '{query}' and extract educational details designed to support a comprehensive learning roadmap.
-Provide the output STRICTLY in JSON format with the following keys:
-- "title": A clear and concise title summarizing the document's main subject.
-- "summary": A detailed summary (at least 250 words) that explains the main content, insights, and educational value of the document.
-- "key_points": A list of 5-10 bullet points outlining the critical facts, concepts, or conclusions that a learner should understand.
-- "learning_objectives": A list of 3-5 specific learning objectives that a student should aim to achieve after reviewing this content.
-- "free_resources": A list of free and readily available resources (websites, articles, tutorials, videos, etc.) that can help a learner further explore the topic.
+Analyze the following document content related to the topic '{query}' and create an interactive learning roadmap designed to help a student master this subject. Your response must be strictly in JSON format with the following keys:
+
+- "title": Provide a clear and concise title summarizing the main subject of the document.
+- "summary": Write a detailed summary (at least 250 words) that covers the key insights, educational value, and main ideas found in the document.
+- "sub_topics": Identify and list all relevant subtopics that are essential for mastering the topic. For each subtopic, include an object with:
+    - "name": The name of the subtopic.
+    - "description": A brief explanation of why this subtopic is important and how it relates to the main topic.
+    - "free_resources": A list of free, popular resources (such as websites, articles, tutorials, videos, etc.) that are specifically useful for learning this subtopic.
+- "mastering_plan": Propose an interactive, step-by-step plan outlining how someone can progressively master the entire topic. This plan should integrate the subtopics and their corresponding free resources, and may include suggestions on interactive activities, self-assessment tips, or discussion prompts to deepen understanding.
+
 If the document content is irrelevant to '{query}', too short, or appears to be an error page, return JSON with the following structure:
 {{
   "title": "Extraction Failed",
   "summary": "Content irrelevant or insufficient",
-  "key_points": [],
-  "learning_objectives": [],
-  "free_resources": []
+  "sub_topics": [],
+  "mastering_plan": []
 }}
 
 JSON Output:
 """
+
         structured_data = call_gemini_api(prompt, text_content)
 
         if structured_data.get("title") == "Error" or structured_data.get("title") == "Extraction Failed":
