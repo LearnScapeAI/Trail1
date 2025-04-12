@@ -7,6 +7,7 @@ import uuid
 import sys
 from bs4 import BeautifulSoup
 from pinecone import Pinecone, ServerlessSpec, PineconeApiException
+from datetime import datetime, timedelta
 
 # Load environment variables from the .env file
 load_dotenv()
@@ -309,7 +310,6 @@ If the document content is irrelevant to '{query}', too short, or appears to be 
 
 JSON Output:
 """
-
         structured_data = call_gemini_api(prompt, text_content)
 
         if structured_data.get("title") == "Error" or structured_data.get("title") == "Extraction Failed":
@@ -345,7 +345,7 @@ def generate_embedding(text):
 # -------------------------
 # Pinecone Integration
 # -------------------------
-def upsert_to_pinecone(knowledge_base):
+def upsert_to_pinecone(knowledge_base, topic):
     if not knowledge_base:
         print("Knowledge base is empty. Skipping Pinecone upsert.")
         return
@@ -405,11 +405,14 @@ def upsert_to_pinecone(knowledge_base):
             embedding = generate_embedding(text_to_embed)
             vector_id = f"urlhash-{hash(item.get('source_url'))}"
             if vector_id in ids_generated:
-                print(f"Warning: Duplicate ID generated ({vector_id}), potentially from the same URL. Appending UUID.")
+                print(f"Warning: Duplicate ID generated ({vector_id}), appending UUID.")
                 vector_id = f"{vector_id}-{uuid.uuid4()}"
             ids_generated.add(vector_id)
 
+            # Add extra metadata: topic and last_updated
             metadata = {
+                "topic": topic,
+                "last_updated": datetime.now().isoformat(),
                 "title": str(item.get("title", "N/A"))[:500],
                 "summary": str(text_to_embed)[:2000],
                 "source_url": str(item.get("source_url", "N/A")),
@@ -459,22 +462,56 @@ def upsert_to_pinecone(knowledge_base):
         print(f"An unexpected error occurred during Pinecone operations: {e}")
 
 # -------------------------
+# Helper: Check for Existing Topic in Pinecone
+# -------------------------
+def topic_exists_recently(topic):
+    """
+    Queries the Pinecone index to see if any vectors with the specified topic exist
+    and whether their last update timestamp is within the last 5 days.
+    """
+    try:
+        index = pc.Index(INDEX_NAME)
+        # Query with a metadata filter for the topic.
+        query_response = index.query(
+            filter={"topic": topic},
+            top_k=1,  # Only need one match to check freshness.
+            include_metadata=True
+        )
+        matches = query_response.get("matches", [])
+        if matches:
+            last_updated_iso = matches[0]["metadata"].get("last_updated")
+            if last_updated_iso:
+                last_updated = datetime.fromisoformat(last_updated_iso)
+                if datetime.now() - last_updated < timedelta(days=5):
+                    print("Topic exists and was updated less than 5 days ago.")
+                    return True
+        return False
+    except Exception as e:
+        print(f"Error querying Pinecone for existing topic: {e}")
+        # In case of error, proceed with reprocessing.
+        return False
+
+# -------------------------
 # Main Execution
 # -------------------------
 if __name__ == "__main__":
-    topic = input("Enter the topic for knowledge base creation: ")
+    topic = input("Enter the topic for knowledge base creation: ").strip()
     if not topic:
         print("Topic cannot be empty.")
     else:
-        print(f"\n--- Starting Knowledge Base Creation for: {topic} ---")
-        kb = build_knowledge_base(topic)
-
-        print("\n--- Knowledge Base Creation Complete ---")
-        print(f"Generated {len(kb)} entries for the knowledge base.")
-
-        if kb:
-            upsert_to_pinecone(kb)
+        # Check if the topic exists and is updated within the last 5 days.
+        if topic_exists_recently(topic):
+            print("A recent knowledge base for this topic already exists in Pinecone. Skipping LLM extraction.")
         else:
-            print("No entries generated, skipping Pinecone upsert.")
+            print(f"\n--- Starting Knowledge Base Creation for: {topic} ---")
+            kb = build_knowledge_base(topic)
+
+            print("\n--- Knowledge Base Creation Complete ---")
+            print(f"Generated {len(kb)} entries for the knowledge base.")
+
+            if kb:
+                upsert_to_pinecone(kb, topic)
+            else:
+                print("No entries generated, skipping Pinecone upsert.")
 
         print("\n--- Script Finished ---")
