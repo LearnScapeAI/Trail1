@@ -4,6 +4,8 @@ import sys
 import requests
 import json
 import time
+import re
+import isodate
 from sentence_transformers import SentenceTransformer
 from pinecone import Pinecone, ServerlessSpec, PineconeApiException
 
@@ -141,16 +143,11 @@ def generate_interactive_prompt(topic, context_text, skill_level, daily_time_com
     )
     return prompt
 
-# -------------------------
-# New: YouTube Search Helper Function
-# -------------------------
 def get_youtube_video_for_subtopic(subtopic_query, api_key, max_results=5):
     """
     Given a subtopic query, search YouTube using the Data API and return the first video
     that meets the criteria (duration < 600 seconds). Returns a dictionary with relevant video info.
     """
-    import isodate  # To parse ISO 8601 duration strings
-
     search_url = "https://www.googleapis.com/youtube/v3/search"
     video_url = "https://www.googleapis.com/youtube/v3/videos"
 
@@ -208,12 +205,13 @@ def get_youtube_video_for_subtopic(subtopic_query, api_key, max_results=5):
 # Main Execution
 # -------------------------
 if __name__ == "__main__":
+    # Gather user inputs for the roadmap
     topic = input("Enter topic: ").strip()
     skill_level = input("Skill level (Beginner/Intermediate/Advanced): ").strip()
     daily_time_commitment = input("Daily time commitment (e.g., '2 hours'): ").strip()
     roadmap_duration = int(input("Roadmap duration (days): ").strip())
 
-    # Query Knowledge Base
+    # Query Knowledge Base (e.g., to get relevant summaries from your documents)
     retrieved_docs = query_knowledge_base(topic)
     if not retrieved_docs:
         print(f"No relevant documents found for '{topic}'.")
@@ -231,11 +229,11 @@ if __name__ == "__main__":
     # Call Gemini API to generate the roadmap based on the prompt and context
     roadmap = call_gemini_api(prompt, context_text)
     
-    # New: Append YouTube video links (if available) to each day/task in the roadmap.
+    # Append YouTube video links (if available) to each day/task in the roadmap.
     YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
     if YOUTUBE_API_KEY and roadmap and "steps" in roadmap:
         for day in roadmap["steps"]:
-            # Each day is represented as a dictionary with a single key for the day.
+            # Each day is represented as a dictionary with a single key (e.g., 'Day 1').
             for day_key in day:
                 tasks = day[day_key]
                 # Loop over each task dictionary in the list for the day.
