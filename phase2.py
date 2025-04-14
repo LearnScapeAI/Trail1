@@ -121,7 +121,7 @@ def generate_interactive_prompt(topic, context_text, skill_level, daily_time_com
         "- For every day, break down the learning tasks into clear segments that collectively add up exactly to the daily time commitment. "
         "Each subtopic should be assigned a realistic amount of time based on the overall daily commitment (for example, if the daily commitment is 2 hours, ensure that tasks split the 2 hours appropriately).\n"
         "- Ensure that the tasks are detailed and include specific learning goals, hands-on practice, and even short breaks or transitions if needed.\n"
-        "- Incorporate useful resource links or references where it makes sense to enhance the learning experience.\n"
+        "- Incorporate useful resource links or references where it makes sense to enhance the learning experience. Also, include at least one relevant YouTube video link per subtopic if available.\n"
         "- The output must be provided strictly in JSON format, without any Markdown, code block indicators, or extra characters.\n\n"
         "Expected JSON structure:\n"
         "{\n"
@@ -142,6 +142,69 @@ def generate_interactive_prompt(topic, context_text, skill_level, daily_time_com
     return prompt
 
 # -------------------------
+# New: YouTube Search Helper Function
+# -------------------------
+def get_youtube_video_for_subtopic(subtopic_query, api_key, max_results=5):
+    """
+    Given a subtopic query, search YouTube using the Data API and return the first video
+    that meets the criteria (duration < 600 seconds). Returns a dictionary with relevant video info.
+    """
+    import isodate  # To parse ISO 8601 duration strings
+
+    search_url = "https://www.googleapis.com/youtube/v3/search"
+    video_url = "https://www.googleapis.com/youtube/v3/videos"
+
+    params = {
+        "part": "snippet",
+        "q": subtopic_query,
+        "key": api_key,
+        "maxResults": max_results,
+        "type": "video"
+    }
+    try:
+        search_response = requests.get(search_url, params=params)
+        search_response.raise_for_status()
+        results = search_response.json().get("items", [])
+    except Exception as e:
+        print(f"Error during YouTube search API call: {e}")
+        return None
+
+    for item in results:
+        video_id = item["id"]["videoId"]
+        params_details = {
+            "part": "contentDetails,snippet",
+            "id": video_id,
+            "key": api_key
+        }
+        try:
+            details_response = requests.get(video_url, params=params_details)
+            details_response.raise_for_status()
+            details_items = details_response.json().get("items", [])
+        except Exception as e:
+            print(f"Error retrieving YouTube video details: {e}")
+            continue
+
+        if details_items:
+            content_details = details_items[0].get("contentDetails", {})
+            duration_str = content_details.get("duration")
+            try:
+                duration_seconds = isodate.parse_duration(duration_str).total_seconds()
+            except Exception as e:
+                print(f"Error parsing duration: {e}")
+                continue
+
+            if duration_seconds < 600:
+                snippet = details_items[0].get("snippet", {})
+                return {
+                    "video_id": video_id,
+                    "title": snippet.get("title"),
+                    "description": snippet.get("description"),
+                    "duration": duration_seconds,
+                    "url": f"https://www.youtube.com/watch?v={video_id}"
+                }
+    return None
+
+# -------------------------
 # Main Execution
 # -------------------------
 if __name__ == "__main__":
@@ -150,6 +213,7 @@ if __name__ == "__main__":
     daily_time_commitment = input("Daily time commitment (e.g., '2 hours'): ").strip()
     roadmap_duration = int(input("Roadmap duration (days): ").strip())
 
+    # Query Knowledge Base
     retrieved_docs = query_knowledge_base(topic)
     if not retrieved_docs:
         print(f"No relevant documents found for '{topic}'.")
@@ -161,12 +225,30 @@ if __name__ == "__main__":
         for doc in retrieved_docs if doc["metadata"].get("summary")
     )
     
-    # Generate prompt with enhanced instructions (each day is individual)
+    # Generate prompt with enhanced instructions
     prompt = generate_interactive_prompt(topic, context_text, skill_level, daily_time_commitment, roadmap_duration)
     
     # Call Gemini API to generate the roadmap based on the prompt and context
     roadmap = call_gemini_api(prompt, context_text)
-
+    
+    # New: Append YouTube video links (if available) to each day/task in the roadmap.
+    YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
+    if YOUTUBE_API_KEY and roadmap and "steps" in roadmap:
+        for day in roadmap["steps"]:
+            # Each day is represented as a dictionary with a single key for the day.
+            for day_key in day:
+                tasks = day[day_key]
+                # Loop over each task dictionary in the list for the day.
+                for task in tasks:
+                    for task_title, task_desc in list(task.items()):
+                        # Use the task title and topic as the search query for YouTube.
+                        youtube_video = get_youtube_video_for_subtopic(f"{topic} {task_title}", YOUTUBE_API_KEY)
+                        if youtube_video:
+                            # Append YouTube link to the task entry by adding a new key.
+                            task[f"{task_title} - YouTube Link"] = youtube_video["url"]
+                        else:
+                            print(f"Warning: No suitable YouTube video found for task '{task_title}'.")
+    
     if roadmap:
         print(json.dumps(roadmap, indent=2))
     else:

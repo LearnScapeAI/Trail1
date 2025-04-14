@@ -21,6 +21,7 @@ GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 PINECONE_API_KEY = os.getenv('PINECONE_API_KEY', "your_default_pinecone_key")
 CUSTOM_SEARCH_ENGINE_ID = os.getenv('CUSTOM_SEARCH_ENGINE_ID', '627f547ffe4c94a8d')
+YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')  # New: YouTube API Key
 
 # Validate API Keys
 if not GOOGLE_API_KEY:
@@ -35,6 +36,8 @@ if not PINECONE_API_KEY:
 if not CUSTOM_SEARCH_ENGINE_ID:
     print("Error: CUSTOM_SEARCH_ENGINE_ID environment variable not set or provided.")
     sys.exit(1)
+if not YOUTUBE_API_KEY:
+    print("Warning: YOUTUBE_API_KEY environment variable not set. YouTube integration will be skipped.")
 
 # Pinecone configuration
 INDEX_NAME = "knowledge-base-index"
@@ -124,6 +127,69 @@ def extract_text_from_html(html_content):
         return ""
 
 # -------------------------
+# New: YouTube Search Helper Function
+# -------------------------
+def get_youtube_video_for_subtopic(subtopic_query, api_key, max_results=5):
+    """
+    Given a subtopic query, search YouTube using the Data API and return the first video
+    that meets the criteria (duration < 600 seconds). Returns a dictionary with relevant video info.
+    """
+    import isodate  # To parse ISO 8601 duration strings
+
+    search_url = "https://www.googleapis.com/youtube/v3/search"
+    video_url = "https://www.googleapis.com/youtube/v3/videos"
+
+    params = {
+        "part": "snippet",
+        "q": subtopic_query,
+        "key": api_key,
+        "maxResults": max_results,
+        "type": "video"
+    }
+    try:
+        search_response = requests.get(search_url, params=params)
+        search_response.raise_for_status()
+        results = search_response.json().get("items", [])
+    except Exception as e:
+        print(f"Error during YouTube search API call: {e}")
+        return None
+
+    for item in results:
+        video_id = item["id"]["videoId"]
+        params_details = {
+            "part": "contentDetails,snippet",
+            "id": video_id,
+            "key": api_key
+        }
+        try:
+            details_response = requests.get(video_url, params=params_details)
+            details_response.raise_for_status()
+            details_items = details_response.json().get("items", [])
+        except Exception as e:
+            print(f"Error retrieving YouTube video details: {e}")
+            continue
+
+        if details_items:
+            content_details = details_items[0].get("contentDetails", {})
+            duration_str = content_details.get("duration")
+            try:
+                duration_seconds = isodate.parse_duration(duration_str).total_seconds()
+            except Exception as e:
+                print(f"Error parsing duration: {e}")
+                continue
+
+            if duration_seconds < 600:
+                snippet = details_items[0].get("snippet", {})
+                return {
+                    "video_id": video_id,
+                    "title": snippet.get("title"),
+                    "description": snippet.get("description"),
+                    "duration": duration_seconds,
+                    "url": f"https://www.youtube.com/watch?v={video_id}"
+                }
+    return None
+
+# -------------------------
 # Gemini API Call
 # -------------------------
 def call_gemini_api(prompt, document_content):
@@ -205,7 +271,9 @@ def call_gemini_api(prompt, document_content):
                 "summary": summary,
                 "key_points": key_points,
                 "learning_objectives": learning_objectives,
-                "free_resources": free_resources
+                "free_resources": free_resources,
+                "sub_topics": parsed_output.get("sub_topics", []),
+                "mastering_plan": parsed_output.get("mastering_plan", [])
             }
         except json.JSONDecodeError:
             print("Warning: Gemini response was not valid JSON. Using the full text as summary.")
@@ -214,7 +282,9 @@ def call_gemini_api(prompt, document_content):
                 "summary": generated_text,
                 "key_points": [],
                 "learning_objectives": [],
-                "free_resources": []
+                "free_resources": [],
+                "sub_topics": [],
+                "mastering_plan": []
             }
 
     except requests.exceptions.Timeout as e:
@@ -224,7 +294,9 @@ def call_gemini_api(prompt, document_content):
             "summary": f"API request timed out after 120 seconds: {e}",
             "key_points": [],
             "learning_objectives": [],
-            "free_resources": []
+            "free_resources": [],
+            "sub_topics": [],
+            "mastering_plan": []
         }
     except requests.exceptions.RequestException as e:
         print(f"Error calling Gemini API (RequestException): {e}")
@@ -240,7 +312,9 @@ def call_gemini_api(prompt, document_content):
             "summary": f"API request failed: {e}. Status: {status_code}",
             "key_points": [],
             "learning_objectives": [],
-            "free_resources": []
+            "free_resources": [],
+            "sub_topics": [],
+            "mastering_plan": []
         }
     except Exception as e:
         print(f"An unexpected error occurred during Gemini API call: {e.__class__.__name__} - {e}")
@@ -255,7 +329,9 @@ def call_gemini_api(prompt, document_content):
             "summary": error_summary,
             "key_points": [],
             "learning_objectives": [],
-            "free_resources": []
+            "free_resources": [],
+            "sub_topics": [],
+            "mastering_plan": []
         }
 
 # -------------------------
@@ -288,7 +364,7 @@ def build_knowledge_base(query):
 
         print(f"Extracted ~{len(text_content)} characters of text. Calling Gemini...")
 
-        # Updated enhanced prompt with additional educational details:
+        # Updated enhanced prompt with additional educational details and requirement to include YouTube links:
         prompt = f"""
 Analyze the following document content related to the topic '{query}' and create an interactive learning roadmap designed to help a student master this subject. Your response must be strictly in JSON format with the following keys:
 
@@ -297,7 +373,7 @@ Analyze the following document content related to the topic '{query}' and create
 - "sub_topics": Identify and list all relevant subtopics that are essential for mastering the topic. For each subtopic, include an object with:
     - "name": The name of the subtopic.
     - "description": A brief explanation of why this subtopic is important and how it relates to the main topic.
-    - "free_resources": A list of free, popular resources (such as websites, articles, tutorials, videos, etc.) that are specifically useful for learning this subtopic.
+    - "free_resources": A list of free, popular resources (such as websites, articles, tutorials, videos, including at least one YouTube video link if available) that are specifically useful for learning this subtopic.
 - "mastering_plan": Propose an interactive, step-by-step plan outlining how someone can progressively master the entire topic. This plan should integrate the subtopics and their corresponding free resources, and may include suggestions on interactive activities, self-assessment tips, or discussion prompts to deepen understanding.
 
 If the document content is irrelevant to '{query}', too short, or appears to be an error page, return JSON with the following structure:
@@ -318,6 +394,25 @@ JSON Output:
             # continue
         else:
             print(f"Successfully processed: Title - {structured_data.get('title')}")
+
+        # New: Integrate YouTube video search for each subtopic (if YOUTUBE_API_KEY is set)
+        if YOUTUBE_API_KEY and "sub_topics" in structured_data and isinstance(structured_data["sub_topics"], list):
+            for subtopic in structured_data["sub_topics"]:
+                subtopic_name = subtopic.get("name")
+                if subtopic_name:
+                    combined_query = f"{query} {subtopic_name}"
+                    youtube_video = get_youtube_video_for_subtopic(combined_query, YOUTUBE_API_KEY)
+                    if youtube_video:
+                        subtopic.setdefault("free_resources", [])
+                        subtopic["free_resources"].append({
+                            "type": "youtube",
+                            "title": youtube_video.get("title"),
+                            "url": youtube_video.get("url"),
+                            "description": youtube_video.get("description"),
+                            "duration_seconds": youtube_video.get("duration")
+                        })
+                    else:
+                        print(f"Warning: No suitable YouTube video found for subtopic '{subtopic_name}'.")
 
         # Append the source URL for traceability
         structured_data["source_url"] = link
