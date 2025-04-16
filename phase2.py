@@ -246,7 +246,7 @@ if __name__ == "__main__":
                             task[f"{task_title} - YouTube Link"] = youtube_video["url"]
                         else:
                             print(f"Warning: No suitable YouTube video found for task '{task_title}'.")
-    
+
     if roadmap:
         print(json.dumps(roadmap, indent=2))
     else:
