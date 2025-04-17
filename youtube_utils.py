@@ -1,3 +1,6 @@
+import logging
+logger = logging.getLogger(__name__)
+
 def get_youtube_video_for_subtopic(subtopic_query, api_key, max_results=5):
     import requests, isodate
     search_url = "https://www.googleapis.com/youtube/v3/search"
@@ -11,7 +14,7 @@ def get_youtube_video_for_subtopic(subtopic_query, api_key, max_results=5):
         response.raise_for_status()
         results = response.json().get("items", [])
     except Exception as e:
-        print(f"YouTube search error: {e}")
+        logger.warning("YouTube search error: %s", e)
         return None
 
     for item in results:
@@ -33,6 +36,6 @@ def get_youtube_video_for_subtopic(subtopic_query, api_key, max_results=5):
                     "url": f"https://www.youtube.com/watch?v={video_id}"
                 }
         except Exception as e:
-            print(f"Video details error: {e}")
+            logger.debug("Error fetching video details: %s", e)
             continue
     return None

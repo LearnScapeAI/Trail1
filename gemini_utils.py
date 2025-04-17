@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 
 def clean_generated_text(text):
     text = text.strip()
@@ -25,13 +27,13 @@ def call_gemini_api(prompt, document_content, api_key):
         result = response.json()
         generated_text = result["candidates"][0]["content"]["parts"][0]["text"]
         generated_text = clean_generated_text(generated_text)
-        print("Cleaned generated text:")
-        print(generated_text)
+        print("=== RAW GEMINI OUTPUT ===\n", generated_text)
+
         try:
             return json.loads(generated_text)
         except json.JSONDecodeError as jde:
-            print("JSON decode error:", jde)
+            logger.error("JSON decode error: %s", jde)
             return None
     except Exception as e:
-        print(f"Gemini API error: {e}")
+        logger.exception("Gemini API error")
         return None
